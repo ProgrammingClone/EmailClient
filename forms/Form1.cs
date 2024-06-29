@@ -14,8 +14,8 @@ namespace EmailClient
     public partial class Form1 : Form
     {
         private readonly Settings settings;
-        private readonly EmailDatabase db;
-        private readonly S3Manager s3Manager;
+        private S3Manager s3Manager;
+        private EmailDatabase db;
 
         private List<Email> emailList;
         private EmailServer currentEmailServer = new EmailServer();
@@ -35,7 +35,7 @@ namespace EmailClient
 
             if (settings.EmailServers.Count > 0 && !string.IsNullOrEmpty(settings.DefaultEmailServer) && settings.EmailServers.ContainsKey(settings.DefaultEmailServer))
             {   // Set the default Email server 
-                currentEmailServer = settings.EmailServers[settings.DefaultEmailServer];
+                currentEmailServer = settings.EmailServers[settings.DefaultEmailServer].Clone(); // We need to clone otherwise editing currentEmailServer will also edit the copy inside our Map
                 Console.WriteLine("Set Default Email Server");
             }
 
@@ -44,7 +44,8 @@ namespace EmailClient
 
             while (!db.IsValidDatabase || !success)
             {   // Maybe the user typed the wrong password in so keep prompting them (pressing the X inside AwsConfigForm will auto close this application)
-                success = RequestDetails();
+                success = RequestDetails(currentEmailServer, true, true);
+                db.Dispose();
                 db = new EmailDatabase(currentEmailServer.Bucket, currentEmailServer.Password);
                 Console.WriteLine("Inside Valid DB:" + db.IsValidDatabase);
             }
@@ -69,7 +70,7 @@ namespace EmailClient
         {
             if (queryingEmails) return; // If we are currently updating the Db force the user to wait
 
-            if (currentPage <= 1) return;
+            if (currentPage <= 1 || currentEmailServer == null) return;
 
             int pageCount = (int)Math.Ceiling(dbEmailCount / (double)settings.EmailsPerPage);
 
@@ -83,7 +84,7 @@ namespace EmailClient
 
         private void OlderButton_Click(object sender, EventArgs e)
         {
-            if (queryingEmails) return; // If we are currently updating the Db force the user to wait
+            if (queryingEmails || currentEmailServer == null) return; // If we are currently updating the Db force the user to wait
 
             int pageCount = (int) Math.Ceiling(dbEmailCount / (double)settings.EmailsPerPage);
             if (currentPage >= pageCount)
@@ -109,7 +110,7 @@ namespace EmailClient
 
         private void S3DeleteButton_Click(object sender, EventArgs e)
         {
-            if (queryingEmails || !dataGridView.Visible) return; // If we are currently updating the Db force the user to wait
+            if (queryingEmails || !dataGridView.Visible || currentEmailServer == null) return; // If we are currently updating the Db force the user to wait
 
             foreach (Email email in emailList)
             {
@@ -136,7 +137,7 @@ namespace EmailClient
 
         private void DeleteButton_Click(object sender, EventArgs e)
         {
-            if (queryingEmails || !dataGridView.Visible) return; // If we are currently updating the Db force the user to wait
+            if (queryingEmails || !dataGridView.Visible || currentEmailServer == null) return; // If we are currently updating the Db force the user to wait
 
             for (int i = emailList.Count - 1; i >= 0; i--)
             {
@@ -154,7 +155,7 @@ namespace EmailClient
 
         private void QueryEmailsButton_Click(object sender, EventArgs e)
         {
-            if (queryingEmails) return; 
+            if (queryingEmails || currentEmailServer == null) return; 
 
             queryingEmails = true;
 
@@ -194,20 +195,15 @@ namespace EmailClient
                 });
         }
 
-        private void DatabaseButton_Click(object sender, EventArgs e)
+        /// <summary> This will update 'EmailServer server' with the users target server and obtain their local db password </summary>
+        private bool RequestDetails(EmailServer server, bool setDefault, bool exit)
         {
-
-        }
-
-        /// <summary> This will update 'currentEmailServer' with the users target server and obtain their local db password </summary>
-        private bool RequestDetails()
-        {
-            using AwsConfigForm form = new AwsConfigForm(currentEmailServer);
+            using AwsConfigForm form = new AwsConfigForm(server);
             if (form.ShowDialog() == DialogResult.OK)
             {
-                if (settings.EmailServers.Count == 0)
+                if (settings.EmailServers.Count == 0 && setDefault)
                 {   // Insure theres always a default db
-                    settings.DefaultEmailServer = currentEmailServer.Bucket;
+                    settings.DefaultEmailServer = server.Bucket;
                 }
                 else
                 {   // This will insure there is always a valid default db
@@ -221,21 +217,21 @@ namespace EmailClient
                         }
                     }
 
-                    if (!pass) settings.DefaultEmailServer = currentEmailServer.Bucket;
+                    if (!pass) settings.DefaultEmailServer = server.Bucket;
                 }
 
-                settings.EmailServers[currentEmailServer.Bucket] = currentEmailServer;
+                settings.EmailServers[server.Bucket] = server;
 
-                string bucketName = currentEmailServer.Bucket;
-                string dbPassword = currentEmailServer.Password;
+                string bucketName = server.Bucket;
+                string dbPassword = server.Password;
 
                 // Now you can use region, bucketName, and dbPassword as needed
-                Console.WriteLine($"Region: {currentEmailServer.RegionEndpoint.SystemName}, Bucket: {bucketName}, DB Password: {dbPassword}");
+                Console.WriteLine($"Region: {server.RegionEndpoint.SystemName}, Bucket: {bucketName}, DB Password: {dbPassword}");
 
                 SaveToJson(settings);
                 return true;
             }
-            else
+            else if (exit)
             {
                 Console.WriteLine("Close application");
                 Form_FormClosing(null, null);
@@ -248,11 +244,12 @@ namespace EmailClient
         private void Form_FormClosing(object sender, FormClosingEventArgs e)
         {
             Console.WriteLine("Form Closing!");
-            db.Close();
+            db.Dispose();
             Thread.Sleep(1000);
         }
 
 
+        #region JsonFileHandler
         public static string GetFilePath(string fileName)
         {
             string exeFile = System.Reflection.Assembly.GetExecutingAssembly().Location;
@@ -260,15 +257,14 @@ namespace EmailClient
             return Path.Combine(exeDir, fileName);
         }
 
-        #region JsonFileHandler
-        public static void SaveToJson(Settings data, string fileName = "Settings.json")
+        private static void SaveToJson(Settings data, string fileName = "Settings.json")
         { 
             string filePath = GetFilePath(fileName);
             string jsonData = JsonConvert.SerializeObject(data, Formatting.Indented);
             File.WriteAllText(filePath, jsonData);
         }
 
-        public static Settings LoadFromJson(string fileName = "Settings.json")
+        private static Settings LoadFromJson(string fileName = "Settings.json")
         {
             string filePath = GetFilePath(fileName);
             if (!File.Exists(filePath))
@@ -281,6 +277,7 @@ namespace EmailClient
             string jsonData = File.ReadAllText(filePath);
             return JsonConvert.DeserializeObject<Settings>(jsonData);
         }
+        #endregion
 
         public sealed class Settings
         {
@@ -299,8 +296,18 @@ namespace EmailClient
 
             [JsonIgnore]
             public string Password { get; set; } = "";
+
+            public EmailServer Clone()
+            {
+                return new EmailServer
+                {
+                    Region = this.Region,
+                    Bucket = this.Bucket,
+                    RegionEndpoint = this.RegionEndpoint,
+                    Password = this.Password
+                };
+            }
         }
-        #endregion
 
     }
 }

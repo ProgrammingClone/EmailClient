@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace EmailClient
@@ -24,7 +23,7 @@ namespace EmailClient
         }
 
         public async Task<List<Email>> ListAndDownloadEmails(string bucketName)
-        {   // https://stackoverflow.com/questions/62681749/usage-of-configureawait-in-net
+        {   
             try
             {
                 ListObjectsV2Response response = await s3Client.ListObjectsV2Async(new ListObjectsV2Request
@@ -115,7 +114,6 @@ namespace EmailClient
                     body = mimeMessage.TextBody;
                 }
 
-
                 return new Email
                 {
                     New = true,
@@ -139,7 +137,7 @@ namespace EmailClient
                 Key = emailKey
             };
 
-            try
+            try 
             {   // https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html
                 var response = await s3Client.DeleteObjectAsync(deleteObjectRequest);
                 Console.WriteLine("Email deleted successfully from S3 bucket.");
@@ -168,7 +166,7 @@ namespace EmailClient
 
     }
 
-    public class Email
+    public sealed class Email
     {
         public bool Checked { get; set; } = false;
         public int Id { get; set; }

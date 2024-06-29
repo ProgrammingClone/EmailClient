@@ -3,14 +3,11 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace EmailClient
 {
-    public sealed class EmailDatabase
+    public sealed class EmailDatabase : IDisposable
     {
         private readonly sqlite3 db;
         public bool IsValidDatabase { get; private set; } = false;
@@ -61,8 +58,7 @@ namespace EmailClient
                 return;
             }
 
-            // Create the table if it doesn't exist
-            string sql = @"
+            const string sql = @"
                 CREATE TABLE IF NOT EXISTS Emails (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     Key TEXT UNIQUE,
@@ -243,10 +239,10 @@ namespace EmailClient
             }
         }
 
-
-        public void Close()
+        public void Dispose()
         {
-            raw.sqlite3_close(db);
+            if(db != null) raw.sqlite3_close(db);
+            IsValidDatabase = false;
         }
     }
 }

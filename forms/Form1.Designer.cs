@@ -1,4 +1,5 @@
 ﻿
+using EmailClient.forms;
 using System;
 using System.Drawing;
 using System.Windows.Forms;
@@ -26,6 +27,8 @@ namespace EmailClient
         }
 
         private readonly RichTextBox textBoxEmail = new RichTextBox();
+        private readonly ToolStripDropDownButton bucketButton = new ToolStripDropDownButton("Buckets");
+        private readonly ContextMenuStrip bucketContextMenu = new ContextMenuStrip();
 
         private void InitializeComponent2()
         {
@@ -78,7 +81,120 @@ namespace EmailClient
             deleteTip.SetToolTip(s3DeleteButton, "Deletes the email locally and from your S3 bucket.");
 
             this.MinimumSize = new Size(625, 200);
+
+            foreach (EmailServer server in settings.EmailServers.Values)
+            {
+                string bucket = server.Bucket;
+                ToolStripMenuItem bucketItem = new ToolStripMenuItem(bucket);
+                bucketItem.Click += BucketButton_Click;
+                bucketContextMenu.Items.Add(bucketItem);
+            }
+
+            bucketContextMenu.Items.Add(new ToolStripSeparator());
+
+            // Add button
+            ToolStripMenuItem addItem = new ToolStripMenuItem("Add Bucket");
+            addItem.Click += AddBucketItem_Click;
+            bucketContextMenu.Items.Add(addItem);
+
+            SetDefaultCheckedItem(currentEmailServer.Bucket);
+
+            bucketButton.DropDown = bucketContextMenu;
+            toolStrip.Items.Add(bucketButton);
         }
+
+        #region Bucket context menu
+        private void SetDefaultCheckedItem(string defaultBucket)
+        {
+            foreach (ToolStripMenuItem item in bucketContextMenu.Items)
+            {
+                if (item.Text == defaultBucket)
+                {
+                    item.Checked = true;
+                    break;
+                }
+            }
+        }
+
+        private void AddBucketItem_Click(object sender, EventArgs e)
+        {
+            EmailServer emailServer = new EmailServer();
+
+            using AwsConfigForm form = new AwsConfigForm(emailServer);
+            if (form.ShowDialog() == DialogResult.OK)
+            {
+                string newBucketName = emailServer.Bucket;
+
+                if (string.IsNullOrEmpty(newBucketName)) return;
+
+                foreach (EmailServer server in settings.EmailServers.Values)
+                {   // Ensure the user is not trying to add a duplicate
+                    string bucket = server.Bucket;
+                    if (newBucketName == bucket) return;
+                }
+
+                ToolStripMenuItem bucketItem = new ToolStripMenuItem(newBucketName);
+                bucketItem.Click += BucketButton_Click;
+
+                // Find the position of the separator or the Add Account button
+                int separatorIndex = bucketContextMenu.Items.Count - 2;
+
+                // Insert the new bucket item just before the separator or at the end if no separator found
+                bucketContextMenu.Items.Insert(separatorIndex, bucketItem);
+
+                settings.EmailServers.Add(newBucketName, emailServer);
+                SaveToJson(settings);
+            }
+        }
+
+        private void BucketButton_Click(object sender, EventArgs e)
+        {
+            ToolStripMenuItem clickedItem = sender as ToolStripMenuItem;
+            if (clickedItem != null)
+            {
+                if (clickedItem.Text == currentEmailServer.Bucket || clickedItem.Checked)
+                {
+                    Console.WriteLine("Same bucket item time to return");
+                    return;
+                }
+
+                bool valid = settings.EmailServers.TryGetValue(clickedItem.Text, out EmailServer newServer);
+                if (!valid) return;
+
+                EmailDatabase newDb = new EmailDatabase(newServer.Bucket, "", true);
+                bool success = newDb.IsValidDatabase;
+
+                while (!newDb.IsValidDatabase || !success)
+                {  
+                    success = RequestDetails(newServer, false, false);
+                    newDb.Dispose(); 
+                    newDb = new EmailDatabase(newServer.Bucket, newServer.Password);
+                    Console.WriteLine("BucketButton_Click Inside Valid DB:" + db.IsValidDatabase);
+                }
+
+                newServer.Password = ""; 
+                currentEmailServer = newServer;
+                db.Dispose();
+                db = newDb;
+
+                dbEmailCount = newDb.GetEmailCount();
+                emailList = newDb.GetEmails(settings.EmailsPerPage, 0); // Populate the list with our newest archived emails
+                Console.WriteLine($"BucketButton_Click EmailListSize:{emailList.Count} DbCount:{dbEmailCount}");
+
+                s3Manager = new S3Manager(newServer.RegionEndpoint, newDb);
+
+                dataGridView.RowCount = Math.Min(settings.EmailsPerPage, emailList.Count);
+                pageNumberLabel.Text = $"Page 1/{Math.Ceiling(dbEmailCount / (double)settings.EmailsPerPage)}";
+
+                foreach (ToolStripItem genericItem in bucketContextMenu.Items)
+                {   // Uncheck the other item
+                    if (genericItem is ToolStripMenuItem item) item.Checked = false;
+                }
+
+                clickedItem.Checked = true;
+            }
+        }
+        #endregion
 
         private void DataGridView_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
@@ -118,14 +234,12 @@ namespace EmailClient
 
             if (e.ColumnIndex == dataGridView.Columns["Checked"].Index)
             {
-                //dataGridView.EndEdit();  // Commit any changes before modifying the cell.
-
                 Email email = emailList[row];
 
                 var cell = dataGridView.Rows[e.RowIndex].Cells["Checked"];
-                if (cell.Value == DBNull.Value || cell.Value == null) // Check for both DBNull and null
+                if (cell.Value == DBNull.Value || cell.Value == null) 
                 {
-                    cell.Value = false; // Initialize the value if it's null or DBNull
+                    cell.Value = false; 
                     email.Checked = false;
                 }
                 else
@@ -134,7 +248,6 @@ namespace EmailClient
                     cell.Value = !isChecked; 
                     email.Checked = !isChecked;
                 }
-               // dataGridView.InvalidateRow(e.RowIndex); // Refresh the row to update the checkbox visually
             }
         }
 
@@ -182,10 +295,8 @@ namespace EmailClient
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
             this.toolStrip = new System.Windows.Forms.ToolStrip();
-            this.databaseButton = new System.Windows.Forms.ToolStripButton();
             this.olderButton = new System.Windows.Forms.ToolStripButton();
             this.newerButton = new System.Windows.Forms.ToolStripButton();
             this.pageNumberLabel = new System.Windows.Forms.ToolStripLabel();
@@ -211,7 +322,6 @@ namespace EmailClient
             // 
             this.toolStrip.BackColor = System.Drawing.Color.Gray;
             this.toolStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.databaseButton,
             this.olderButton,
             this.newerButton,
             this.pageNumberLabel});
@@ -219,18 +329,6 @@ namespace EmailClient
             this.toolStrip.Name = "toolStrip";
             this.toolStrip.Size = new System.Drawing.Size(800, 25);
             this.toolStrip.TabIndex = 0;
-            // 
-            // databaseButton
-            // 
-            this.databaseButton.BackColor = System.Drawing.Color.LightGray;
-            this.databaseButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
-            this.databaseButton.Image = ((System.Drawing.Image)(resources.GetObject("databaseButton.Image")));
-            this.databaseButton.ImageTransparentColor = System.Drawing.Color.Magenta;
-            this.databaseButton.Margin = new System.Windows.Forms.Padding(1, 3, 3, 3);
-            this.databaseButton.Name = "databaseButton";
-            this.databaseButton.Size = new System.Drawing.Size(64, 19);
-            this.databaseButton.Text = "Databases";
-            this.databaseButton.Click += new System.EventHandler(this.DatabaseButton_Click);
             // 
             // olderButton
             // 
@@ -452,7 +550,6 @@ namespace EmailClient
         private ToolStripButton olderButton;
         private ToolStripButton newerButton;
         private ToolStripLabel pageNumberLabel;
-        private ToolStripButton databaseButton;
     }
 }
 
